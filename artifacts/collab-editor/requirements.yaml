@@ -1,0 +1,15 @@
+packages:
+  "uuid": "For generating unique client IDs"
+  "@types/uuid": "Type definitions for uuid"
+  "date-fns": "For formatting timestamps"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility function to efficiently merge Tailwind CSS classes"
+  "lucide-react": "Beautiful consistent icons"
+
+images: []
+
+notes:
+  - "The app integrates with the provided API via @workspace/api-client-react hooks."
+  - "Real-time collaboration is managed via BroadcastChannel for same-origin tabs."
+  - "Offline support relies on IndexedDB for local file storage and operation queuing."
+  - "A Service Worker is registered to cache static assets."

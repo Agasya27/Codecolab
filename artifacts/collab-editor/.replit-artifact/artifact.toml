@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Collaborative Code Editor"
+version = "1.0.0"
+id = "artifacts/collab-editor"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+localPort = 25414
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "pnpm --filter @workspace/collab-editor run dev"
+
+[services.env]
+PORT = "25414"
+BASE_PATH = "/"
+
+[services.production]
+build = ["pnpm", "--filter", "@workspace/collab-editor", "run", "build"]
+publicDir = "artifacts/collab-editor/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"

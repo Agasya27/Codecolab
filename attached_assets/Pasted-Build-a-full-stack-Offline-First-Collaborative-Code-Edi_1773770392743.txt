@@ -1,0 +1,260 @@
+Build a full-stack Offline-First Collaborative Code Editor web app on Replit.
+
+## Stack
+- Frontend: React 18 + Vite
+- State: Zustand
+- Editor: CodeMirror 6
+- Backend: Node.js + Express + ws (WebSocket)
+- Database: IndexedDB via idb package
+- Offline: Service Worker (manual)
+- Styling: Tailwind CSS
+
+## Project Structure
+/
+├── server/
+│   ├── index.js
+│   └── ot.js
+├── src/
+│   ├── ot/
+│   │   ├── operations.js
+│   │   └── transform.js
+│   ├── store/index.js
+│   ├── sync/SyncManager.js
+│   ├── db/index.js
+│   ├── components/
+│   │   ├── EditorPane.jsx
+│   │   ├── FileTree.jsx
+│   │   ├── CollabBar.jsx
+│   │   ├── VersionTimeline.jsx
+│   │   └── ConflictResolver.jsx
+│   ├── hooks/useCollabEditor.js
+│   ├── utils/colorFromId.js
+│   ├── App.jsx
+│   └── main.jsx
+├── public/sw.js
+├── vite.config.js
+└── package.json
+
+---
+
+## Module 1: OT Engine (build this first)
+
+Create src/ot/operations.js and src/ot/transform.js
+
+Operations are plain objects:
+- { type: 'insert', position: number, char: string, userId: string, timestamp: number }
+- { type: 'delete', position: number, userId: string, timestamp: number }
+
+In transform.js implement:
+
+transform(op1, op2, priority):
+  Transforms op1 against op2. Priority is 'left' or 'right' for tiebreaking.
+  Cases:
+  - insert vs insert same position: higher priority goes first, adjust other's position
+  - insert vs delete before insert position: shift insert left by 1
+  - delete vs delete same position: second becomes no-op (return null)
+  - delete vs insert before delete position: shift delete right by 1
+
+applyOp(document, op): returns new document string after applying op
+
+applyOps(document, ops[]): applies array of ops in order
+
+detectConflict(op1, op2): returns true if ops cannot be silently merged
+
+In operations.js export the op type definitions and applyOp, applyOps
+
+---
+
+## Module 2: WebSocket Server
+
+Create server/index.js and server/ot.js
+
+server/index.js:
+- Express server on port 3001
+- WebSocket server on /collaborate endpoint
+- In-memory rooms: Record<fileId, { content, revision, clients, opLog[] }>
+
+Message protocol (JSON):
+
+Client to server:
+- { type: 'join', fileId, userId, userName }
+- { type: 'op', fileId, userId, op, baseRevision }
+- { type: 'cursor', fileId, userId, cursor }
+- { type: 'leave', fileId, userId }
+
+Server to client:
+- { type: 'init', content, revision, peers }
+- { type: 'op', op, revision, userId }
+- { type: 'ack', revision }
+- { type: 'cursor', userId, cursor }
+- { type: 'peer_join', userId, userName, color }
+- { type: 'peer_leave', userId }
+
+When op arrives with baseRevision < currentRevision:
+  Transform incoming op against all ops in opLog since baseRevision
+  Then apply and broadcast the transformed op
+
+server/ot.js: copy the same transform() logic for server-side use
+
+---
+
+## Module 3: IndexedDB Layer
+
+Create src/db/index.js using the idb package
+
+Schema:
+- files store: keyPath 'id', stores { id, name, content, language, lastModified }
+- pendingOps store: autoIncrement key, stores { fileId, op, timestamp }
+- snapshots store: [fileId, timestamp] compound key, stores { fileId, timestamp, content, revision, label }
+
+Export functions:
+- initDB()
+- saveFile(file), getFile(id), getAllFiles(), deleteFile(id)
+- savePendingOp(fileId, op), getPendingOps(fileId), clearPendingOps(fileId)
+- saveSnapshot(snapshot), getSnapshots(fileId)
+
+---
+
+## Module 4: Zustand Store
+
+Create src/store/index.js with these slices:
+
+Files slice:
+  files: {},
+  activeFileId: null,
+  actions: createFile, deleteFile, setActiveFile, updateFileContent
+
+Collab slice:
+  peers: {},
+  pendingOps: [],
+  serverRevision: 0,
+  localRevision: 0,
+  isOnline: true,
+  actions: addPeer, updatePeerCursor, removePeer, enqueueOp, flushPendingOps, setOnlineStatus
+
+History slice:
+  snapshots: [],
+  actions: takeSnapshot, restoreSnapshot, getSnapshotsForFile
+
+Conflict slice:
+  conflicts: [],
+  actions: addConflict, resolveConflict
+
+---
+
+## Module 5: SyncManager
+
+Create src/sync/SyncManager.js as a class
+
+Constructor takes: { wsUrl, userId, userName, store, db }
+
+Methods:
+- connect(): opens WS, sets up message handlers, reconnects with exponential backoff on drop
+- joinFile(fileId): sends join message, loads pending ops from IndexedDB
+- sendOp(op): saves to IndexedDB pendingOps AND sends via WS
+- handleRemoteOp(op): transforms against local pendingOps using transform(), then applies
+- flushPendingOps(): on reconnect, replay all IndexedDB pendingOps to server in order
+- disconnect(): clean close
+
+On WS open: emit online status to store
+On WS close: emit offline status to store, start reconnect timer
+Reconnect backoff: 1s, 2s, 4s, 8s, max 30s
+
+---
+
+## Module 6: Service Worker
+
+Create public/sw.js
+
+On install: cache these assets: '/', '/index.html', '/src/main.jsx'
+On fetch: if offline serve from cache, else fetch from network and update cache
+On message { type: 'SKIP_WAITING' }: self.skipWaiting()
+On sync event 'flush-ops': post message { type: 'connection-restored' } to all clients
+
+Register the SW in src/main.jsx
+
+---
+
+## Module 7: React Components
+
+### src/utils/colorFromId.js
+Function colorFromId(userId): deterministically maps userId string to one of 8 
+distinct hex colors using a simple hash. Colors should be bright and distinct.
+
+### src/components/EditorPane.jsx
+- CodeMirror 6 editor with javascript and python language support
+- On every change: create insert/delete ops and call SyncManager.sendOp()
+- Custom CodeMirror extension that renders peer cursors as colored vertical 
+  lines with a small username label above using the peer's color from colorFromId
+- Accept props: fileId, content, peers, onOp
+
+### src/components/FileTree.jsx
+- Sidebar showing all files from store
+- Click to switch active file
+- Button to create new file (prompt for name)
+- Right-click or X button to delete file
+- Show a colored dot indicator: green = synced, yellow = pending ops, red = conflict
+
+### src/components/CollabBar.jsx
+- Top bar with app title
+- Row of colored circle avatars showing connected peers with initials
+- Online/Offline pill indicator (green when online, gray when offline)
+- Undo and Redo buttons
+- History button that opens VersionTimeline
+
+### src/components/VersionTimeline.jsx
+- Slide-in drawer showing snapshots for active file
+- Each item shows: timestamp, label, revision number
+- Click a snapshot: show a simple before/after diff below it
+- Restore button: replaces current file content with snapshot content
+
+### src/components/ConflictResolver.jsx
+- Modal that appears when conflicts[] store has items
+- Split view: left panel = local version, right panel = remote version
+- Buttons: Accept Local, Accept Remote
+- On resolve: call store resolveConflict(), broadcast winning content as a full replace op
+
+### src/hooks/useCollabEditor.js
+- Custom hook that wires SyncManager + Zustand store + CodeMirror
+- Initializes SyncManager on mount, disconnects on unmount
+- Handles incoming ops: apply to CodeMirror document via transactions
+- Takes snapshots on file switch and every 10 seconds of active editing
+- Returns: { editorView, peers, isOnline, conflicts }
+
+### src/App.jsx
+- Layout: sidebar (FileTree) + main area (CollabBar on top, EditorPane below)
+- Render ConflictResolver modal when conflicts exist
+- Render VersionTimeline drawer when history button is clicked
+- Initialize DB on mount via initDB()
+
+---
+
+## vite.config.js
+Configure proxy: /ws requests proxy to http://localhost:3001 with ws: true
+This ensures the WebSocket works in Replit's environment.
+
+---
+
+## package.json scripts
+"dev": run vite and node server/index.js concurrently
+"build": vite build
+"preview": vite preview
+
+Install these packages:
+react, react-dom, zustand, @codemirror/view, @codemirror/state,
+@codemirror/lang-javascript, @codemirror/lang-python,
+@codemirror/basic-setup, idb, express, ws, concurrently, vite,
+@vitejs/plugin-react, tailwindcss, autoprefixer
+
+---
+
+## Important Replit-specific notes
+1. Server must listen on 0.0.0.0 not localhost
+2. Use process.env.PORT || 3001 for the server port
+3. WebSocket URL in frontend: use wss:// when window.location.protocol is https
+4. Put the WS URL logic in SyncManager: 
+   const wsUrl = window.location.protocol === 'https:' 
+     ? `wss://${window.location.host}/ws` 
+     : `ws://${window.location.host}/ws`
+
+Build everything completely with working code. Do not use placeholder comments.

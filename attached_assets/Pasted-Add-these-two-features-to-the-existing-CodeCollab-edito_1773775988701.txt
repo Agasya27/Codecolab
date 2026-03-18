@@ -1,0 +1,55 @@
+Add these two features to the existing CodeCollab editor:
+
+--- FEATURE 1: User join badge notification ---
+
+When a new user connects to the same room/file, show a toast notification 
+in the bottom-right corner of the editor that says:
+  "[Username] joined the session"
+with a colored circle avatar matching their unique color.
+
+The toast should:
+- Slide in from the bottom-right with a smooth animation
+- Stay visible for 3 seconds then fade out
+- Stack if multiple users join quickly (show up to 3 toasts at once)
+- Use the same color system from colorFromId(userId)
+- Show a leave toast too: "[Username] left the session" in gray
+
+Also update the top navbar peer avatars so that:
+- Each connected peer shows as a colored circle with their initials
+- Hovering over the circle shows a tooltip with their full name
+- A subtle pulse animation on the avatar when they are actively typing
+- When a peer disconnects their avatar fades out with a smooth transition
+- Show peer count: "2 peers" next to the avatars when more than 1 person
+
+--- FEATURE 2: Real-time peer cursors ---
+
+Show every connected peer's cursor position live inside the CodeMirror editor.
+
+Implementation:
+- Use CodeMirror 6 StateField and ViewPlugin to create a custom decoration extension
+- Each peer gets a cursor decoration: a 2px wide colored vertical line at their 
+  exact character position in the document
+- Above the cursor line show a small floating label pill with the peer's name, 
+  using the same background color as their cursor, white text, 8px font, 
+  rounded corners, positioned absolutely above the cursor insertion point
+- The cursor and label should update smoothly every time a peer_cursor message 
+  arrives via WebSocket
+- When a peer stops typing for 3 seconds their cursor label fades to 30% opacity
+- When a peer disconnects remove their cursor decoration immediately
+
+WebSocket cursor messages:
+- Send: { type: 'cursor', fileId, userId, position: number } on every 
+  CodeMirror selectionSet transaction
+- Receive: update that peer's cursor position in Zustand peers slice
+- The ViewPlugin should watch the peers slice and re-render decorations 
+  when any peer's cursor changes
+
+Make sure cursor positions survive document edits — when local text is 
+inserted before a peer's cursor position, shift their cursor right by the 
+inserted length. When text is deleted before their cursor, shift left.
+
+--- DO NOT add a code execution terminal ---
+The assignment does not require code execution. Focus only on these 
+two collaboration features.
+
+Write complete working code for both features.
